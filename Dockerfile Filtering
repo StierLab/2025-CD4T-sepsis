@@ -1,0 +1,74 @@
+# Install base bioconductor image with R 4.3.0 (based on rocker R build)
+FROM bioconductor/bioconductor_docker:RELEASE_3_17
+
+# Label maintainer
+LABEL maintainer="matthew.stier@vumc.org"
+
+# Set environment variables to make R package installation non-interactive
+ENV DEBIAN_FRONTEND=noninteractive
+ENV R_REMOTES_NO_ERRORS_FROM_WARNINGS=true
+ENV _R_CHECK_FORCE_SUGGESTS_=false
+
+# Set environment variable to the correct library path
+ENV R_LIBS_USER=/usr/local/lib/R/host-site-library
+
+# Install Linux dependencies for R packages, and utilities for AWS CLI installation
+RUN apt-get update && apt-get install -y \
+    libcurl4-gnutls-dev \
+    libssl-dev \
+    libxml2-dev \
+    wget \
+    unzip \
+    libfontconfig1-dev \
+    libharfbuzz-dev \
+    libfribidi-dev \
+    libfreetype6-dev \
+    libpng-dev \
+    libtiff5-dev \
+    libjpeg-dev \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install AWS CLI v2
+RUN wget "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -O "awscliv2.zip" && \
+    unzip awscliv2.zip && \
+    ./aws/install && \
+    rm -f awscliv2.zip && \
+    rm -rf aws
+
+# Install Bioconductor, remotes, CRAN packages, and sceasy dependencies
+RUN R -e "BiocManager::install(c('SingleCellExperiment', 'SummarizedExperiment', 'DropletUtils', 'scDblFinder', 'glmGamPoi', 'LoomExperiment', 'reticulate'), version = '3.17', ask = FALSE, update = TRUE, dependencies = TRUE)" && \
+    R --no-save --no-restore -e "install.packages('remotes', dependencies = TRUE, repos = 'https://cloud.r-project.org/')" && \
+    R --no-save --no-restore -e "remotes::install_version('Seurat', version = '4.3.0', dependencies = TRUE, repos = 'https://cloud.r-project.org/')" && \
+    R --no-save --no-restore -e "install.packages('scCustomize', dependencies = TRUE, repos = 'https://cloud.r-project.org/')" && \
+    R --no-save --no-restore -e "remotes::install_github('cellgeni/sceasy')" && \
+    R --no-save --no-restore -e "remotes::install_version('Matrix', version = '1.6-1', dependencies = TRUE, repos = 'https://cloud.r-project.org/')" && \
+    R --no-save --no-restore -e "remotes::install_version('SeuratObject', version = '5.0.0', dependencies = TRUE, repos = 'https://cloud.r-project.org/')"
+
+# Install Miniconda
+RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh \
+    && bash /tmp/miniconda.sh -b -p /opt/miniconda \
+    && rm /tmp/miniconda.sh
+
+# Set path to conda
+ENV PATH="/opt/miniconda/bin:${PATH}"
+
+# Install Mamba
+RUN conda install mamba -n base -c conda-forge -y && conda clean -a
+
+# Create a conda environment with Mamba and install the required Python packages
+RUN mamba create -n myenv python=3.9 anndata scanpy loompy -c conda-forge -c bioconda -y && conda clean -a
+
+# Set the default environment to your new environment for non-interactive sessions
+ENV PATH /opt/miniconda/envs/myenv/bin:$PATH
+
+# Create a directory for scripts
+RUN mkdir -p /opt/scripts
+
+# Copy R script into the container
+COPY scDblFinder_v1_scale.R /opt/scripts/scDblFinder_v1_scale.R
+
+# Set the working directory to /app
+WORKDIR /app
+
+# Default command
+CMD ["R"]
